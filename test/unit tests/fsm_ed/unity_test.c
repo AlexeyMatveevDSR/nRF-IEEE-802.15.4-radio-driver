@@ -47,6 +47,7 @@
 #include "mock_nrf_802154_rsch.h"
 #include "mock_nrf_802154_rssi.h"
 #include "mock_nrf_802154_rx_buffer.h"
+#include "mock_nrf_802154_timer_coord.h"
 #include "mock_nrf_fem_control_api.h"
 #include "mock_nrf_radio.h"
 #include "mock_nrf_timer.h"
@@ -148,6 +149,10 @@ static void verify_receive_begin_setup(uint32_t shorts)
     nrf_ppi_channel_enable_Expect(PPI_EGU_RAMP_UP);
     nrf_ppi_channel_enable_Expect(PPI_EGU_TIMER_START);
     nrf_ppi_channel_enable_Expect(PPI_DISABLED_EGU);
+
+    event_addr = rand();
+    nrf_radio_event_address_get_ExpectAndReturn(NRF_RADIO_EVENT_CRCOK, (uint32_t *)event_addr);
+    nrf_802154_timer_coord_timestamp_prepare_Expect(event_addr);
 }
 
 static void verify_receive_begin_finds_free_buffer(void)
@@ -199,17 +204,11 @@ void test_ed_begin_ShallDoNothingIfOutOfTimeslot(void)
     ed_init(true);
 }
 
-void test_ed_begin_ShallResetRadioIfTimeslotIsTooShort(void)
+void test_ed_begin_ShallSilentlyWaitIfTimeslotIsTooShort(void)
 {
     nrf_802154_rsch_timeslot_us_left_get_ExpectAndReturn(1);
 
     m_rsch_timeslot_is_granted = true;
-
-    nrf_radio_power_set_Expect(false);
-    nrf_radio_power_set_Expect(true);
-
-    nrf_fem_control_ppi_disable_Expect(NRF_FEM_CONTROL_LNA_PIN);
-    nrf_fem_control_pin_clear_Expect();
 
     ed_init(true);
 }
@@ -413,7 +412,7 @@ void test_edend_handler_ShallStartNextIterationOfEdIfEdDidNotEnd(void)
     irq_edend_state_ed();
 }
 
-void test_edend_handler_ShallResetRadioAndWaitForNextTimeslotIfCannotStartNextIteration(void)
+void test_edend_handler_ShallWaitForNextTimeslotIfCannotStartNextIteration(void)
 {
     uint8_t result = rand();
 
@@ -423,13 +422,6 @@ void test_edend_handler_ShallResetRadioAndWaitForNextTimeslotIfCannotStartNextIt
     nrf_radio_ed_sample_get_ExpectAndReturn(result);
 
     nrf_802154_rsch_timeslot_us_left_get_ExpectAndReturn(0);
-    m_rsch_timeslot_is_granted = true;
-
-    nrf_radio_power_set_Expect(false);
-    nrf_radio_power_set_Expect(true);
-
-    nrf_fem_control_ppi_disable_Expect(NRF_FEM_CONTROL_LNA_PIN);
-    nrf_fem_control_pin_clear_Expect();
 
     nrf_fem_control_ppi_disable_Expect(NRF_FEM_CONTROL_LNA_PIN);
     nrf_fem_control_timer_reset_Expect(NRF_FEM_CONTROL_LNA_PIN, NRF_TIMER_SHORT_COMPARE0_STOP_MASK);

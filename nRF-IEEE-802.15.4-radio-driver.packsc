@@ -21,6 +21,7 @@
             "src/nrf_802154_rsch.h",
             "src/nrf_802154_rssi.h",
             "src/nrf_802154_rx_buffer.h",
+            "src/nrf_802154_timer_coord.h",
             "src/mac_features/nrf_802154_filter.h"
         ],
         "_replacements": [
@@ -50,13 +51,15 @@
                     "src/nrf_802154_rsch.c",
                     "src/nrf_802154_rssi.c",
                     "src/nrf_802154_rx_buffer.c",
+                    "src/nrf_802154_timer_coord.c",
                     "src/mac_features/nrf_802154_ack_timeout.c",
                     "src/mac_features/nrf_802154_csma_ca.c",
                     "src/mac_features/nrf_802154_delayed_trx.c",
                     "src/mac_features/nrf_802154_filter.c",
                     "src/platform/clock/nrf_802154_clock_sdk.c",
+                    "src/platform/hp_timer/nrf_802154_hp_timer.c",
+                    "src/platform/lp_timer/nrf_802154_lp_timer_nodrv.c",
                     "src/platform/temperature/nrf_802154_temperature_none.c",
-                    "src/platform/timer/nrf_802154_timer_nodrv.c",
                     "src/timer_scheduler/nrf_802154_timer_sched.c",
                     "src/nrf_802154_notification_swi.c",
                     "src/nrf_802154_priority_drop_swi.c",
@@ -85,13 +88,15 @@
                     "src/nrf_802154_rsch.c",
                     "src/nrf_802154_rssi.c",
                     "src/nrf_802154_rx_buffer.c",
+                    "src/nrf_802154_timer_coord.c",
                     "src/mac_features/nrf_802154_ack_timeout.c",
                     "src/mac_features/nrf_802154_csma_ca.c",
                     "src/mac_features/nrf_802154_delayed_trx.c",
                     "src/mac_features/nrf_802154_filter.c",
                     "src/platform/clock/nrf_802154_clock_sdk.c",
+                    "src/platform/hp_timer/nrf_802154_hp_timer.c",
+                    "src/platform/lp_timer/nrf_802154_lp_timer_nodrv.c",
                     "src/platform/temperature/nrf_802154_temperature_none.c",
-                    "src/platform/timer/nrf_802154_timer_nodrv.c",
                     "src/timer_scheduler/nrf_802154_timer_sched.c",
                     "src/nrf_802154_notification_direct.c",
                     "src/nrf_802154_priority_drop_direct.c",
@@ -125,7 +130,8 @@
                     "cmock\\mock_nrf_802154_revision.c",
                     "cmock\\mock_nrf_802154_rsch.c",
                     "cmock\\mock_nrf_802154_rssi.c",
-                    "cmock\\mock_nrf_802154_rx_buffer.c"
+                    "cmock\\mock_nrf_802154_rx_buffer.c",
+                    "cmock\\mock_nrf_802154_timer_coord.c"
                 ],
                 "_includes": [
                     "3|cmock"

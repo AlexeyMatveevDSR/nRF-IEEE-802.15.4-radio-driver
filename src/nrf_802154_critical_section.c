@@ -43,7 +43,7 @@
 #include "nrf_802154_debug.h"
 #include "nrf_802154_rsch.h"
 #include "hal/nrf_radio.h"
-#include "platform/timer/nrf_802154_timer.h"
+#include "platform/lp_timer/nrf_802154_lp_timer.h"
 
 #include <nrf.h>
 
@@ -159,8 +159,6 @@ static void radio_critical_section_enter(void)
     if (nrf_802154_rsch_prec_is_approved(RSCH_PREC_RAAL))
     {
         NVIC_DisableIRQ(RADIO_IRQn);
-        __DSB();
-        __ISB();
     }
 }
 
@@ -217,8 +215,10 @@ static bool critical_section_enter(bool forced)
         }
         while (__STREXB(cnt + 1, &m_nested_critical_section_counter));
 
-        nrf_802154_timer_critical_section_enter();
+        nrf_802154_lp_timer_critical_section_enter();
         radio_critical_section_enter();
+        __DSB();
+        __ISB();
 
         m_critical_section_monitor++;
 
@@ -231,13 +231,18 @@ static bool critical_section_enter(bool forced)
 static void critical_section_exit(void)
 {
     uint8_t     cnt      = m_nested_critical_section_counter;
-    rsch_evt_t  rsch_evt = rsch_pending_evt_clear();
+    rsch_evt_t  rsch_evt = RSCH_EVT_NONE;
     uint8_t     monitor;
     uint8_t     atomic_cnt;
     static bool exiting_crit_sect;
     bool        result;
 
     assert(cnt > 0);
+
+    if (cnt == 1)
+    {
+        rsch_evt = rsch_pending_evt_clear();
+    }
 
     do
     {
@@ -252,7 +257,7 @@ static void critical_section_exit(void)
 
             rsch_evt_process(rsch_evt);
             radio_critical_section_exit();
-            nrf_802154_timer_critical_section_exit();
+            nrf_802154_lp_timer_critical_section_exit();
 
             exiting_crit_sect = false;
         }
@@ -261,9 +266,8 @@ static void critical_section_exit(void)
         {
             atomic_cnt = __LDREXB(&m_nested_critical_section_counter);
             assert(atomic_cnt == cnt);
-            cnt = atomic_cnt;
         }
-        while (__STREXB(cnt - 1, &m_nested_critical_section_counter));
+        while (__STREXB(atomic_cnt - 1, &m_nested_critical_section_counter));
 
         // If critical section is not nested verify if during exit procedure RSCH notified
         // change of state or critical section was visited by higher priority IRQ meantime.
@@ -383,29 +387,39 @@ uint32_t nrf_802154_critical_section_active_vector_priority_get(void)
 
 void nrf_802154_rsch_prec_approved(void)
 {
-    if (critical_section_enter(false) && rsch_pending_evt_is_none())
+    bool crit_sect_success = critical_section_enter(false);
+
+    if (crit_sect_success && rsch_pending_evt_is_none())
     {
         nrf_802154_critical_section_rsch_prec_approved();
-
-        critical_section_exit();
     }
     else
     {
         rsch_pending_evt_set(RSCH_EVT_STARTED);
     }
+
+    if (crit_sect_success)
+    {
+        critical_section_exit();
+    }
 }
 
 void nrf_802154_rsch_prec_denied(void)
 {
-    if (critical_section_enter(false) && rsch_pending_evt_is_none())
+    bool crit_sect_success = critical_section_enter(false);
+
+    if (crit_sect_success && rsch_pending_evt_is_none())
     {
         nrf_802154_critical_section_rsch_prec_denied();
-
-        critical_section_exit();
     }
     else
     {
         rsch_pending_evt_set(RSCH_EVT_ENDED);
+    }
+
+    if (crit_sect_success)
+    {
+        critical_section_exit();
     }
 }
 

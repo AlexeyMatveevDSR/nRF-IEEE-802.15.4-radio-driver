@@ -56,10 +56,11 @@
 #include "nrf_802154_rsch.h"
 #include "nrf_802154_rssi.h"
 #include "nrf_802154_rx_buffer.h"
+#include "nrf_802154_timer_coord.h"
 #include "hal/nrf_radio.h"
 #include "platform/clock/nrf_802154_clock.h"
+#include "platform/lp_timer/nrf_802154_lp_timer.h"
 #include "platform/temperature/nrf_802154_temperature.h"
-#include "platform/timer/nrf_802154_timer.h"
 #include "timer_scheduler/nrf_802154_timer_sched.h"
 
 #include "mac_features/nrf_802154_ack_timeout.h"
@@ -98,6 +99,38 @@ static void tx_buffer_fill(const uint8_t * p_data, uint8_t length)
 }
 #endif // !NRF_802154_USE_RAW_API
 
+/**
+ * @brief Get timestamp of the last received frame.
+ *
+ * @note This function increments the returned value by 1 us if the timestamp is equal to the
+ *       @ref NRF_802154_NO_TIMESTAMP value to indicate that the timestamp is available.
+ *
+ * @returns Timestamp [us] of the last received frame or @ref NRF_802154_NO_TIMESTAMP if
+ *          the timestamp is inaccurate.
+ */
+static uint32_t last_rx_frame_timestamp_get(void)
+{
+#if NRF_802154_FRAME_TIMESTAMP_ENABLED
+    uint32_t timestamp;
+    bool     timestamp_received = nrf_802154_timer_coord_timestamp_get(&timestamp);
+
+    if (!timestamp_received)
+    {
+        timestamp = NRF_802154_NO_TIMESTAMP;
+    }
+    else
+    {
+        if (timestamp == NRF_802154_NO_TIMESTAMP)
+        {
+            timestamp++;
+        }
+    }
+
+    return timestamp;
+#else // NRF_802154_FRAME_TIMESTAMP_ENABLED
+    return NRF_802154_NO_TIMESTAMP;
+#endif // NRF_802154_FRAME_TIMESTAMP_ENABLED
+}
 
 void nrf_802154_channel_set(uint8_t channel)
 {
@@ -172,6 +205,7 @@ void nrf_802154_init(void)
     nrf_802154_critical_section_init();
     nrf_802154_debug_init();
     nrf_802154_notification_init();
+    nrf_802154_lp_timer_init();
     nrf_802154_pib_init();
     nrf_802154_priority_drop_init();
     nrf_802154_request_init();
@@ -179,16 +213,17 @@ void nrf_802154_init(void)
     nrf_802154_rsch_init();
     nrf_802154_rx_buffer_init();
     nrf_802154_temperature_init();
-    nrf_802154_timer_init();
+    nrf_802154_timer_coord_init();
     nrf_802154_timer_sched_init();
 }
 
 void nrf_802154_deinit(void)
 {
     nrf_802154_timer_sched_deinit();
-    nrf_802154_timer_deinit();
+    nrf_802154_timer_coord_uninit();
     nrf_802154_temperature_deinit();
     nrf_802154_rsch_uninit();
+    nrf_802154_lp_timer_deinit();
     nrf_802154_clock_deinit();
     nrf_802154_core_deinit();
 }
@@ -538,34 +573,8 @@ __WEAK void nrf_802154_tx_ack_started(void)
 #if NRF_802154_USE_RAW_API
 __WEAK void nrf_802154_received_raw(uint8_t * p_data, int8_t power, uint8_t lqi)
 {
-#if NRF_802154_FRAME_TIMESTAMP_ENABLED
-    uint32_t timestamp = nrf_802154_timer_sched_time_get();
-
-    nrf_802154_received_timestamp_raw(p_data, power, lqi, timestamp);
-#else // NRF_802154_FRAME_TIMESTAMP_ENABLED
-    nrf_802154_buffer_free_raw(p_data);
-#endif // NRF_802154_FRAME_TIMESTAMP_ENABLED
+    nrf_802154_received_timestamp_raw(p_data, power, lqi, last_rx_frame_timestamp_get());
 }
-
-#else // NRF_802154_USE_RAW_API
-__WEAK void nrf_802154_received(uint8_t * p_data, uint8_t length, int8_t power, uint8_t lqi)
-{
-#if NRF_802154_FRAME_TIMESTAMP_ENABLED
-    uint32_t timestamp = nrf_802154_timer_sched_time_get();
-
-    nrf_802154_received_timestamp(p_data, length, power, lqi, timestamp);
-#else // NRF_802154_FRAME_TIMESTAMP_ENABLED
-    (void)length;
-    (void)power;
-    (void)lqi;
-
-    nrf_802154_buffer_free(p_data);
-#endif // NRF_802154_FRAME_TIMESTAMP_ENABLED
-}
-#endif // !NRF_802154_USE_RAW_API
-
-#if NRF_802154_FRAME_TIMESTAMP_ENABLED
-#if NRF_802154_USE_RAW_API
 
 __WEAK void nrf_802154_received_timestamp_raw(uint8_t * p_data,
                                               int8_t    power,
@@ -581,6 +590,11 @@ __WEAK void nrf_802154_received_timestamp_raw(uint8_t * p_data,
 
 #else // NRF_802154_USE_RAW_API
 
+__WEAK void nrf_802154_received(uint8_t * p_data, uint8_t length, int8_t power, uint8_t lqi)
+{
+    nrf_802154_received_timestamp(p_data, length, power, lqi, last_rx_frame_timestamp_get());
+}
+
 __WEAK void nrf_802154_received_timestamp(uint8_t * p_data,
                                           uint8_t   length,
                                           int8_t    power,
@@ -594,9 +608,7 @@ __WEAK void nrf_802154_received_timestamp(uint8_t * p_data,
 
     nrf_802154_buffer_free(p_data);
 }
-
-#endif // NRF_802154_USE_RAW_API
-#endif // NRF_802154_FRAME_TIMESTAMP_ENABLED
+#endif // !NRF_802154_USE_RAW_API
 
 __WEAK void nrf_802154_receive_failed(nrf_802154_rx_error_t error)
 {
@@ -614,58 +626,10 @@ __WEAK void nrf_802154_transmitted_raw(const uint8_t * p_frame,
                                        int8_t          power,
                                        uint8_t         lqi)
 {
-#if NRF_802154_FRAME_TIMESTAMP_ENABLED
-
-    uint32_t timestamp = (p_ack == NULL) ? 0 : nrf_802154_timer_sched_time_get();
+    uint32_t timestamp = (p_ack == NULL) ? NRF_802154_NO_TIMESTAMP : last_rx_frame_timestamp_get();
 
     nrf_802154_transmitted_timestamp_raw(p_frame, p_ack, power, lqi, timestamp);
-
-#else // NRF_802154_FRAME_TIMESTAMP_ENABLED
-
-    (void)p_frame;
-    (void)power;
-    (void)lqi;
-
-    if (p_ack != NULL)
-    {
-        nrf_802154_buffer_free_raw(p_ack);
-    }
-
-#endif // NRF_802154_FRAME_TIMESTAMP_ENABLED
 }
-
-#else // NRF_802154_USE_RAW_API
-__WEAK void nrf_802154_transmitted(const uint8_t * p_frame,
-                                   uint8_t       * p_ack,
-                                   uint8_t         length,
-                                   int8_t          power,
-                                   uint8_t         lqi)
-{
-#if NRF_802154_FRAME_TIMESTAMP_ENABLED
-
-    uint32_t timestamp = (p_ack == NULL) ? 0 : nrf_802154_timer_sched_time_get();
-
-    nrf_802154_transmitted_timestamp(p_frame, p_ack, length, power, lqi, timestamp);
-
-#else // NRF_802154_FRAME_TIMESTAMP_ENABLED
-
-    (void)p_frame;
-    (void)length;
-    (void)power;
-    (void)lqi;
-
-    if (p_ack != NULL)
-    {
-        nrf_802154_buffer_free(p_ack);
-    }
-
-#endif // NRF_802154_FRAME_TIMESTAMP_ENABLED
-}
-#endif // NRF_802154_USE_RAW_API
-
-
-#if NRF_802154_FRAME_TIMESTAMP_ENABLED
-#if NRF_802154_USE_RAW_API
 
 __WEAK void nrf_802154_transmitted_timestamp_raw(const uint8_t * p_frame,
                                                  uint8_t       * p_ack,
@@ -686,6 +650,17 @@ __WEAK void nrf_802154_transmitted_timestamp_raw(const uint8_t * p_frame,
 
 #else // NRF_802154_USE_RAW_API
 
+__WEAK void nrf_802154_transmitted(const uint8_t * p_frame,
+                                   uint8_t       * p_ack,
+                                   uint8_t         length,
+                                   int8_t          power,
+                                   uint8_t         lqi)
+{
+    uint32_t timestamp = (p_ack == NULL) ? NRF_802154_NO_TIMESTAMP : last_rx_frame_timestamp_get();
+
+    nrf_802154_transmitted_timestamp(p_frame, p_ack, length, power, lqi, timestamp);
+}
+
 __WEAK void nrf_802154_transmitted_timestamp(const uint8_t * p_frame,
                                              uint8_t       * p_ack,
                                              uint8_t         length,
@@ -704,9 +679,8 @@ __WEAK void nrf_802154_transmitted_timestamp(const uint8_t * p_frame,
         nrf_802154_buffer_free(p_ack);
     }
 }
-
 #endif // NRF_802154_USE_RAW_API
-#endif // NRF_802154_FRAME_TIMESTAMP_ENABLED
+
 
 __WEAK void nrf_802154_transmit_failed(const uint8_t * p_frame, nrf_802154_tx_error_t error)
 {
